@@ -17,6 +17,19 @@ import config
 if sys.stdout:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
+def find_system_browser() -> str | None:
+    candidates = [
+        os.environ.get('M365_BROWSER_PATH', ''),
+        r'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        r'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        r'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        r'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
 
 class AccountManager:
     """管理多个 M365 账号的认证和 token"""
@@ -410,10 +423,17 @@ class AccountManager:
         pw = await async_playwright().start()
         try:
             print(f"[Auth] 启动 Chromium（全新环境）...")
-            browser = await pw.chromium.launch(
-                headless=config.PLAYWRIGHT_HEADLESS,
-                args=['--disable-blink-features=AutomationControlled', '--no-sandbox'],
-            )
+            browser_path = find_system_browser()
+            launch_options = {
+                'headless': config.PLAYWRIGHT_HEADLESS,
+                'args': ['--disable-blink-features=AutomationControlled', '--no-sandbox'],
+            }
+            if browser_path:
+                print(f'[Auth] 使用系统浏览器: {browser_path}')
+                launch_options['executable_path'] = browser_path
+            else:
+                print('[Auth] 未找到系统 Edge/Chrome，尝试使用 Playwright 自带 Chromium')
+            browser = await pw.chromium.launch(**launch_options)
 
             context = await browser.new_context(
                 viewport={'width': 1280, 'height': 800},

@@ -111,6 +111,15 @@ class ApiWorker(QThread):
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode('utf-8', errors='replace')
                 self.success.emit(json.loads(raw) if raw else {})
+        except urllib.error.HTTPError as exc:
+            detail = exc.reason
+            try:
+                raw = exc.read().decode('utf-8', errors='replace')
+                payload = json.loads(raw) if raw else {}
+                detail = payload.get('error') or payload.get('message') or raw or detail
+            except Exception:
+                pass
+            self.failed.emit(f'HTTP {exc.code}: {detail}')
         except Exception as exc:
             self.failed.emit(str(exc))
 

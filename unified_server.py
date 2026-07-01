@@ -500,10 +500,17 @@ def status():
 def refresh():
     data = request.get_json(silent=True) or {}
     username = data.get('username')
-    ok = auth_manager.refresh_token(username)
+    try:
+        ok = auth_manager.refresh_token(username)
+    except Exception as exc:
+        message = f'Token refresh exception: {exc}'
+        print(f'[Refresh] {message}')
+        return jsonify({'error': message}), 500
     if ok:
         return jsonify({'message': 'Token refresh succeeded'})
-    return jsonify({'error': 'Token refresh failed'}), 500
+    if username and not any(a.get('username') == username for a in getattr(auth_manager, 'accounts', [])):
+        return jsonify({'error': f'Account not found: {username}'}), 404
+    return jsonify({'error': 'Token refresh failed. Check account password, TOTP, network, and browser availability.'}), 500
 
 
 def _tool_names(tools) -> set:
