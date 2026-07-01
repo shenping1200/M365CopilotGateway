@@ -1,24 +1,24 @@
-﻿# Release Notes
+﻿# 发布说明
 
 ## v1.0.0
 
-Initial packaged release of M365CopilotGateway.
+M365CopilotGateway 首个桌面打包版本。
 
-### Included
+### 本版包含
 
-- Windows desktop manager with application icon
-- Unified OpenAI-compatible endpoint on port `8080`
-- Dashboard on port `7860`
-- Seven model IDs exposed through `/v1/models`
-- `/v1/chat/completions`, `/v1/responses`, and `/v1/messages` compatibility
-- Hermes and Codex tool-call compatibility
-- Tool alias normalization for terminal, desktop, and browser tools
-- Runtime model/tool/security configuration
-- Request logging and dashboard log view
-- Rate limiting
-- Crash supervision and automatic service restart
-- Packaged release with blank `accounts.json`
+- 带应用图标的 Windows 桌面管理器
+- `8080` 端口上的统一 OpenAI 兼容接口
+- `7860` 端口上的 Dashboard 管理面板
+- 通过 `/v1/models` 暴露 7 个模型 ID
+- 兼容 `/v1/chat/completions`、`/v1/responses`、`/v1/messages`
+- 兼容 Hermes 和 Codex 的工具调用格式
+- 支持终端、桌面、浏览器工具别名统一
+- 支持运行时模型、工具、安全配置
+- 支持请求日志和 Dashboard 日志查看
+- 支持限流
+- 支持崩溃监控和自动重启
+- 发布包内只包含空的 `accounts.json`
 
-### Security
+### 安全说明
 
-The release package does not include local account credentials, token caches, MSAL caches, or local log files.
+发布包不包含本地账号凭据、token 缓存、MSAL 缓存或本地日志文件。
