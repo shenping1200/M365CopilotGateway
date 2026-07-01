@@ -1,0 +1,71 @@
+﻿{
+  "models": [
+    {
+      "id": "copilot-auto",
+      "object": "model",
+      "owned_by": "microsoft",
+      "name": "Auto"
+    },
+    {
+      "id": "copilot-quick",
+      "object": "model",
+      "owned_by": "microsoft",
+      "name": "Quick response"
+    },
+    {
+      "id": "copilot-thinking",
+      "object": "model",
+      "owned_by": "microsoft",
+      "name": "Deep reasoning"
+    },
+    {
+      "id": "gpt-5.5",
+      "object": "model",
+      "owned_by": "microsoft",
+      "name": "GPT 5.5 quick"
+    },
+    {
+      "id": "gpt-5.5-thinking",
+      "object": "model",
+      "owned_by": "microsoft",
+      "name": "GPT 5.5 thinking"
+    },
+    {
+      "id": "gpt-5.2",
+      "object": "model",
+      "owned_by": "microsoft",
+      "name": "GPT 5.2 quick"
+    },
+    {
+      "id": "gpt-5.2-thinking",
+      "object": "model",
+      "owned_by": "microsoft",
+      "name": "GPT 5.2 thinking"
+    }
+  ],
+  "tool_aliases": {
+    "exec_command": "terminal",
+    "shell": "terminal",
+    "shell_command": "terminal",
+    "terminal": "terminal",
+    "run_command": "terminal",
+    "bash": "terminal",
+    "powershell": "terminal",
+    "computer_use": "desktop",
+    "computer": "desktop",
+    "desktop": "desktop",
+    "browser": "browser"
+  },
+  "security": {
+    "lan_access": true,
+    "require_api_key": false,
+    "api_keys": [
+      "120"
+    ],
+    "allowed_ips": []
+  },
+  "logging": {
+    "include_user_agent": true,
+    "include_tools": true
+  }
+}

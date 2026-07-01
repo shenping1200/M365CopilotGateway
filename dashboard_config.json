@@ -1,0 +1,13 @@
+{
+  "server": {
+    "api_port": 8080,
+    "host": "0.0.0.0"
+  },
+  "token": {
+    "ttl_seconds": 3600,
+    "refresh_cooldown_seconds": 120
+  },
+  "playwright": {
+    "headless": false
+  }
+}

@@ -1,0 +1,11 @@
+﻿{
+  "models": [
+    {"id": "m365-copilot", "name": "M365 Copilot"},
+    {"id": "m365-copilot:persist", "name": "M365 Copilot Persistent"},
+    {"id": "m365-copilot-creative", "name": "M365 Copilot Creative"},
+    {"id": "m365-copilot-balanced", "name": "M365 Copilot Balanced"},
+    {"id": "m365-copilot-precise", "name": "M365 Copilot Precise"},
+    {"id": "m365-copilot-web", "name": "M365 Copilot Web"},
+    {"id": "m365-copilot-work", "name": "M365 Copilot Work"}
+  ]
+}

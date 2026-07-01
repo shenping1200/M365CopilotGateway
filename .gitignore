@@ -1,0 +1,36 @@
+﻿# Runtime secrets and account data
+accounts.json
+token_cache.json
+substrate_token.txt
+msal_cache.bin
+*.bak
+*2fa*.csv
+*邮箱*.csv
+
+# Logs and local runtime
+logs/
+*.log
+desktop_manager_runtime.log
+desktop_manager_start.log
+
+# Python / build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+
+# Local scratch/vendor copies
+work/
+vendor/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Release archives
+*.zip
+
