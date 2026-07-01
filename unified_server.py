@@ -54,6 +54,7 @@ MODEL_LIST = runtime_cfg.get('models') or []
 TOOL_ALIASES = runtime_cfg.get('tool_aliases') or {}
 
 TERMINAL_TOOL_NAMES = {'exec_command', 'shell', 'shell_command', 'terminal', 'run_command', 'bash', 'powershell'}
+DESKTOP_TOOL_HINTS = {'computer', 'desktop', 'gui', 'mouse', 'keyboard', 'screen', 'screenshot'}
 
 TERMINAL_COMMAND_FIELDS = ('command', 'cmd', 'script')
 
@@ -236,6 +237,26 @@ def _normalize_tools(tools):
                 },
             })
     return normalized
+
+
+def _tool_client_label() -> str:
+    user_agent = (request.headers.get('User-Agent') or '').lower()
+    headers = ' '.join(str(request.headers.get(name) or '').lower() for name in (
+        'User-Agent', 'X-Client-Name', 'X-Provider', 'X-Stainless-Arch', 'X-Stainless-Lang'
+    ))
+    if 'hermes' in headers:
+        return 'hermes'
+    if 'codex' in headers:
+        if 'darwin' in headers or 'mac' in headers:
+            return 'codex-mac'
+        if 'windows' in headers or 'win32' in headers:
+            return 'codex-windows'
+        return 'codex'
+    if 'python' in user_agent:
+        return 'python-client'
+    if user_agent:
+        return user_agent[:40]
+    return 'unknown'
 
 
 def build_tools_system_prompt(tools, tool_choice=None):
@@ -515,6 +536,45 @@ def delete_account_api(username):
         return jsonify({'error': 'account not found'}), 404
     return jsonify({'message': 'account deleted', 'account': username, 'accounts': auth_manager.get_all_status()})
 
+
+@app.route('/v1/tool-diagnostics', methods=['GET'])
+def tool_diagnostics():
+    limit = request.args.get('limit', '50')
+    try:
+        limit_int = max(1, min(200, int(limit)))
+    except ValueError:
+        limit_int = 50
+    logs = req_logger.get_logs(filter_type='tools', limit=limit_int)
+    recent = []
+    for item in reversed(logs):
+        recent.append({
+            'ts': item.get('ts'),
+            'client': item.get('client'),
+            'api': item.get('api'),
+            'model': item.get('model'),
+            'tools_count': item.get('tools_count', 0),
+            'tools': item.get('tools') or [],
+            'tool_categories': item.get('tool_categories') or [],
+            'has_terminal_tool': bool(item.get('has_terminal_tool')),
+            'has_desktop_tool': bool(item.get('has_desktop_tool')),
+            'has_browser_tool': bool(item.get('has_browser_tool')),
+            'has_tool_output': bool(item.get('has_tool_output')),
+            'response_kind': item.get('response_kind') or '-',
+            'summary': item.get('summary') or '',
+            'status': item.get('status'),
+            'error': item.get('error') or '',
+        })
+    return jsonify({
+        'ok': True,
+        'meaning': {
+            'tools_count': 'Number of tools provided by the client in the request.',
+            'has_terminal_tool': 'Whether the client exposed a local terminal/shell tool.',
+            'response_kind': 'plain_text, tool_calls, or upstream_error.',
+        },
+        'recent': recent,
+        'stats': req_logger.get_stats(),
+    })
+
 @app.route('/status', methods=['GET'])
 def status():
     return jsonify(auth_manager.get_daily_stats())
@@ -559,10 +619,19 @@ def _terminal_arguments_for_tool(tool_name: str, command: str, timeout: int = 30
 def _tool_log_details(tools) -> dict:
     names = sorted(_tool_names(tools))
     categories = sorted({_canonical_tool_name(name) for name in names if name})
+    terminal_tools = [name for name in names if _canonical_tool_name(name) == 'terminal']
+    desktop_tools = [name for name in names if _canonical_tool_name(name) == 'desktop' or any(hint in name.lower() for hint in DESKTOP_TOOL_HINTS)]
+    browser_tools = [name for name in names if _canonical_tool_name(name) == 'browser' or 'browser' in name.lower()]
     return {
         'tools_count': len(names),
         'tools': names[:20],
         'tool_categories': categories[:20],
+        'has_terminal_tool': bool(terminal_tools),
+        'has_desktop_tool': bool(desktop_tools),
+        'has_browser_tool': bool(browser_tools),
+        'terminal_tools': terminal_tools[:10],
+        'desktop_tools': desktop_tools[:10],
+        'browser_tools': browser_tools[:10],
     }
 
 
@@ -574,10 +643,17 @@ def _request_log_extra(api: str, tools=None, stream: bool = False, has_tool_outp
         'path': request.path,
         'stream': bool(stream),
         'has_tool_output': bool(has_tool_output),
+        'client': _tool_client_label(),
         'user_agent': (request.headers.get('User-Agent') or '')[:120],
     }
     extra.update(_tool_log_details(tools))
     return extra
+
+
+def _log_with_response_kind(model, account, elapsed_ms, success, response_kind, summary='', error=None, extra=None):
+    payload = dict(extra or {})
+    payload['response_kind'] = response_kind
+    req_logger.log_request(model, account, elapsed_ms, success, error=error, request_summary=summary, extra=payload)
 
 
 def _simple_local_tool_call(user_message: str, tools):
@@ -586,9 +662,38 @@ def _simple_local_tool_call(user_message: str, tools):
         return None
     msg = (user_message or '').lower()
     compact = re.sub(r'\s+', '', msg)
+    c_drive_terms = ('c\u76d8', 'cdrive', 'c:')
+    space_terms = ('\u5360\u7528', '\u7a7a\u95f4', 'usage', 'space', 'free', '\u5269\u4f59')
+    if any(term in compact for term in c_drive_terms) and any(term in compact for term in space_terms):
+        return _make_tool_call(terminal_tool, _terminal_arguments_for_tool(terminal_tool, 'df -h /mnt/c', 30))
     if ('c盘' in compact or 'cdrive' in compact or 'c:' in compact) and any(x in compact for x in ('占用', '空间', 'usage', 'space', 'free', '剩余')):
         return _make_tool_call(terminal_tool, _terminal_arguments_for_tool(terminal_tool, 'df -h /mnt/c', 30))
     return None
+
+
+def _looks_like_local_tool_request(message: str) -> bool:
+    text = (message or '').lower()
+    keywords = (
+        'terminal', 'shell', 'command', 'exec', 'run ', 'powershell', 'bash', 'df -h',
+        'diskutil', 'tmutil', 'sudo', '本机', '终端', '命令', '执行', '磁盘', '硬盘',
+        '缓存', '垃圾', '目录', '文件', '截图', '鼠标', '键盘', '点击', '打开程序',
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _print_tool_diagnostics(extra: dict, user_message: str) -> None:
+    names = extra.get('tools') or []
+    categories = extra.get('tool_categories') or []
+    client = extra.get('client', 'unknown')
+    extra['local_tool_request'] = _looks_like_local_tool_request(user_message)
+    print(
+        f"[Tools] client={client} count={extra.get('tools_count', 0)} "
+        f"categories={','.join(categories) or '-'} terminal={extra.get('has_terminal_tool')} "
+        f"desktop={extra.get('has_desktop_tool')} browser={extra.get('has_browser_tool')} "
+        f"names={','.join(names[:10]) or '-'}"
+    )
+    if not names and extra['local_tool_request']:
+        print('[Tools] local-action request detected, but client did not provide any tools')
 def _chat_impl(data: Dict[str, Any]):
     messages = data.get('messages', [])
     stream = data.get('stream', False)
@@ -596,12 +701,6 @@ def _chat_impl(data: Dict[str, Any]):
     tools = _normalize_tools(data.get('tools'))
     tool_choice = data.get('tool_choice')
     log_extra = data.get('_log_extra') or _request_log_extra('chat.completions', tools, stream)
-    if tools:
-        try:
-            names = [t.get('function', {}).get('name') for t in tools if t.get('type') == 'function']
-            print('[Tools] client provided: ' + ', '.join([n for n in names if n]))
-        except Exception:
-            pass
 
     limited = _rate_limited_response()
     if limited is not None:
@@ -635,6 +734,8 @@ def _chat_impl(data: Dict[str, Any]):
     if not user_message:
         return jsonify({'error': {'message': 'missing user message'}}), 400
 
+    _print_tool_diagnostics(log_extra, user_message)
+
     system_prompt = '\n\n'.join(system_msgs) if system_msgs else None
     tools_prompt = build_tools_system_prompt(tools, tool_choice) if tools else None
 
@@ -654,7 +755,11 @@ def _chat_impl(data: Dict[str, Any]):
         completion_id = f'chatcmpl-{uuid.uuid4().hex[:12]}'
         timestamp = int(time.time())
         input_tk = _estimate_tokens(user_message)
-        req_logger.log_request(model, None, 0, True, request_summary='simple_tool_call: ' + simple_tool_call['function']['name'], extra=log_extra)
+        _log_with_response_kind(
+            model, None, 0, True, 'tool_calls',
+            summary='simple_tool_call: ' + simple_tool_call['function']['name'],
+            extra=log_extra,
+        )
         return jsonify({
             'id': completion_id,
             'object': 'chat.completion',
@@ -702,7 +807,11 @@ def _chat_impl(data: Dict[str, Any]):
 
     if result.get('error') and not result.get('content'):
         elapsed = (time.time() - start_time) * 1000
-        req_logger.log_request(model, used_account, elapsed, False, error=result['error'], extra=log_extra)
+        _log_with_response_kind(
+            model, used_account, elapsed, False, 'upstream_error',
+            error=result['error'],
+            extra=log_extra,
+        )
         return jsonify({'error': {'message': result['error']}}), 500
 
     content = result['content']
@@ -714,9 +823,11 @@ def _chat_impl(data: Dict[str, Any]):
     auth_manager.record_token_usage(used_account, input_tk, output_tk)
 
     if tool_calls:
-        req_logger.log_request(model, used_account, elapsed_for_log, True,
-                               request_summary=f'tool_call: {tool_calls[0]["function"]["name"]}',
-                               extra=log_extra)
+        _log_with_response_kind(
+            model, used_account, elapsed_for_log, True, 'tool_calls',
+            summary=f'tool_call: {tool_calls[0]["function"]["name"]}',
+            extra=log_extra,
+        )
         return jsonify({
             'id': completion_id,
             'object': 'chat.completion',
@@ -738,9 +849,11 @@ def _chat_impl(data: Dict[str, Any]):
             },
         })
 
-    req_logger.log_request(model, used_account, elapsed_for_log, True,
-                           request_summary=f'{content[:80]}...' if len(content) > 80 else content,
-                           extra=log_extra)
+    _log_with_response_kind(
+        model, used_account, elapsed_for_log, True, 'plain_text',
+        summary=f'{content[:80]}...' if len(content) > 80 else content,
+        extra=log_extra,
+    )
     return jsonify({
         'id': completion_id,
         'object': 'chat.completion',

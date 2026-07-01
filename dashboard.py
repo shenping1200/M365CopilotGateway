@@ -154,6 +154,27 @@ def get_log_data(filter_type):
     return rows or [['暂无日志', '-', '-', '-', '-', '-', '-', '-', '-', '-']]
 
 
+def get_log_data(filter_type):
+    if not req_logger:
+        return [['暂无日志', '-', '-', '-', '-', '-', '-', '-', '-', '-']]
+    rows = []
+    for item in reversed(req_logger.get_logs(filter_type=filter_type, limit=200)):
+        tool_diag = f"{item.get('tools_count', 0)} / {', '.join(item.get('tool_categories') or []) or '-'}"
+        rows.append([
+            item.get('ts', '-'),
+            item.get('client_ip', '-'),
+            item.get('api', '-'),
+            item.get('model', '-'),
+            item.get('account', '-'),
+            f"{item.get('elapsed_ms', 0):.0f}ms",
+            item.get('status', '-'),
+            item.get('response_kind', '-'),
+            tool_diag,
+            (item.get('summary') or '-')[:120],
+        ])
+    return rows or [['暂无日志', '-', '-', '-', '-', '-', '-', '-', '-', '-']]
+
+
 def clear_logs():
     if req_logger:
         req_logger.clear()

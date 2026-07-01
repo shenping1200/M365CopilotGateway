@@ -358,9 +358,10 @@ class MainWindow(QMainWindow):
         self.btn_clear_req_logs = QPushButton('清空请求日志')
         row.addWidget(QLabel('过滤：')); row.addWidget(self.log_filter_combo); row.addWidget(self.btn_refresh_req_logs); row.addWidget(self.btn_clear_req_logs); row.addStretch(1)
         lo.addLayout(row)
-        self.request_log_table = QTableWidget(0, 6)
+        self.request_log_table = QTableWidget(0, 10)
         self._setup_table(self.request_log_table, stretch_last=True)
         self.request_log_table.setHorizontalHeaderLabels(['时间', '模型', '账号', '耗时', '状态', '摘要'])
+        self.request_log_table.setHorizontalHeaderLabels(['时间', '客户端', '接口', '模型', '账号', '耗时', '状态', '工具数', '工具类别', '响应类型'])
         lo.addWidget(self.request_log_table, 1)
         tabs.addTab(logs, '请求日志')
 
@@ -591,6 +592,26 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(1200, self._restore_refresh_buttons)
         self.status_worker = None
     def refresh_request_logs_native(self):
+        try:
+            from request_logger import get_request_logger
+            logs = get_request_logger().get_logs(filter_type=self.log_filter_combo.currentText(), limit=100)
+            rows = [[
+                l.get('ts',''),
+                l.get('client','-'),
+                l.get('api','-'),
+                l.get('model',''),
+                l.get('account',''),
+                f"{l.get('elapsed_ms',0):.0f}ms",
+                l.get('status',''),
+                str(l.get('tools_count', 0)),
+                ', '.join(l.get('tool_categories') or []) or '-',
+                l.get('response_kind','-'),
+            ] for l in reversed(logs)]
+            self._set_table(self.request_log_table, rows or [['暂无日志','-','-','-','-','-','-','-','-','-']])
+            return
+        except Exception as exc:
+            self.append_log(f'[NativePanel] 请求日志刷新失败：{exc}\n')
+            return
         try:
             from request_logger import get_request_logger
             logs = get_request_logger().get_logs(filter_type=self.log_filter_combo.currentText(), limit=100)
