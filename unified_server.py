@@ -491,6 +491,30 @@ def list_accounts():
     return jsonify({'accounts': auth_manager.get_all_status()})
 
 
+
+@app.route('/v1/accounts', methods=['POST'])
+def add_account_api():
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    totp_secret = data.get('totp_secret') or ''
+    if not username or not password:
+        return jsonify({'error': 'username and password are required'}), 400
+    ok = auth_manager.add_account(username, password, totp_secret)
+    if not ok:
+        return jsonify({'error': 'account already exists or add failed'}), 409
+    return jsonify({'message': 'account added', 'account': username, 'accounts': auth_manager.get_all_status()})
+
+@app.route('/v1/accounts/<path:username>', methods=['DELETE'])
+def delete_account_api(username):
+    username = (username or '').strip()
+    if not username:
+        return jsonify({'error': 'username is required'}), 400
+    ok = auth_manager.remove_account(username)
+    if not ok:
+        return jsonify({'error': 'account not found'}), 404
+    return jsonify({'message': 'account deleted', 'account': username, 'accounts': auth_manager.get_all_status()})
+
 @app.route('/status', methods=['GET'])
 def status():
     return jsonify(auth_manager.get_daily_stats())

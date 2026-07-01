@@ -647,9 +647,9 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         try:
-            from auth import get_account_manager
-            ok = get_account_manager().remove_account(username)
-            self.append_log(f'[NativePanel] 删除账号 {username}: {ok}\n')
+            encoded = urllib.parse.quote(username, safe='')
+            self._api_json(f'/v1/accounts/{encoded}', method='DELETE', timeout=30)
+            self.append_log(f'[NativePanel] 删除账号 {username}: True\\n')
         except Exception as exc:
             QMessageBox.warning(self, '删除失败', str(exc))
         self.refresh_native_panel()
@@ -710,15 +710,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, '提示', '请填写账号和密码。')
             return
         try:
-            from auth import get_account_manager
-            manager = get_account_manager()
-            ok = manager.add_account(data['username'], data['password'], data['totp_secret'])
-            if ok:
-                username = data["username"]
-                self.append_log(f'[NativePanel] 添加账号 {username} 成功。\\n')
-                self.refresh_native_panel()
-            else:
-                QMessageBox.warning(self, '提示', '账号已存在，或添加失败。')
+            self._api_json('/v1/accounts', method='POST', payload=data, timeout=30)
+            username = data["username"]
+            self.append_log(f'[NativePanel] 添加账号 {username} 成功。\\n')
+            self.refresh_native_panel()
         except Exception as exc:
             self.append_log(f'[NativePanel] 添加账号失败：{exc}\\n')
             QMessageBox.warning(self, '添加失败', str(exc))
