@@ -742,6 +742,7 @@ class MainWindow(QMainWindow):
         self.services_started = True
         self.card_api._value_label.setText(f'\u8fd0\u884c\u4e2d:{config.SERVER_PORT}')
         self.card_panel._value_label.setText(f'\u8fd0\u884c\u4e2d:{config.DASHBOARD_PORT}')
+        self.btn_start.setEnabled(False)
         self.btn_open_api.setEnabled(True)
         self.btn_open_browser.setEnabled(True)
         self.btn_stop.setEnabled(bool(self.started_by_launcher and self.process is not None))
@@ -757,6 +758,7 @@ class MainWindow(QMainWindow):
         self.services_started = False
         self.card_api._value_label.setText(f'\u672a\u8fd0\u884c:{config.SERVER_PORT}')
         self.card_panel._value_label.setText(f'\u672a\u8fd0\u884c:{config.DASHBOARD_PORT}')
+        self.btn_start.setEnabled(True)
         self.btn_open_api.setEnabled(False)
         self.btn_open_browser.setEnabled(False)
         self.btn_stop.setEnabled(False)

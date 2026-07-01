@@ -50,7 +50,8 @@ class AccountManager:
         self._load_accounts()
         self._load_token_cache()
         self._check_daily_reset()
-        self._start_auto_refresh_loop()
+        if os.getenv('M365_AUTO_REFRESH', '0').lower() in ('1', 'true', 'yes', 'on'):
+            self._start_auto_refresh_loop()
 
     # ==================================================================
     # 数据加载
