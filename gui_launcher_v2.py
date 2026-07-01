@@ -149,26 +149,31 @@ class Card(QFrame):
 class AddAccountDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('?? M365 ??')
-        self.setFixedSize(400, 250)
+        self.setWindowTitle('添加 M365 账号')
+        self.setFixedSize(560, 360)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
 
-        self.username_input = QLineEdit(); self.username_input.setPlaceholderText('?? (e.g. user@domain.com)')
-        self.password_input = QLineEdit(); self.password_input.setPlaceholderText('??'); self.password_input.setEchoMode(QLineEdit.Password)
-        self.totp_input = QLineEdit(); self.totp_input.setPlaceholderText('TOTP ?? (??)')
+        self.username_input = QLineEdit(); self.username_input.setPlaceholderText('账号 (例如 user@domain.com)')
+        self.username_input.setMinimumHeight(38)
+        self.password_input = QLineEdit(); self.password_input.setPlaceholderText('密码'); self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setMinimumHeight(38)
+        self.totp_input = QLineEdit(); self.totp_input.setPlaceholderText('TOTP 密钥 (可选)')
+        self.totp_input.setMinimumHeight(38)
 
-        layout.addWidget(QLabel('??:'))
+        layout.addWidget(QLabel('账号:'))
         layout.addWidget(self.username_input)
-        layout.addWidget(QLabel('??:'))
+        layout.addWidget(QLabel('密码:'))
         layout.addWidget(self.password_input)
-        layout.addWidget(QLabel('TOTP ??:'))
+        layout.addWidget(QLabel('TOTP 密钥:'))
         layout.addWidget(self.totp_input)
 
         btns = QHBoxLayout()
-        self.btn_ok = QPushButton('??'); self.btn_ok.setObjectName('PrimaryButton')
-        self.btn_cancel = QPushButton('??')
+        self.btn_ok = QPushButton('保存'); self.btn_ok.setObjectName('PrimaryButton')
+        self.btn_ok.setMinimumHeight(36)
+        self.btn_cancel = QPushButton('取消')
+        self.btn_cancel.setMinimumHeight(36)
         btns.addWidget(self.btn_ok); btns.addWidget(self.btn_cancel)
         layout.addLayout(btns)
 
@@ -319,7 +324,7 @@ class MainWindow(QMainWindow):
         self.btn_login_selected = QPushButton('登录选中账号')
         self.btn_delete_selected = QPushButton('删除选中账号')
         self.btn_refresh_accounts = QPushButton('刷新账号列表')
-        self.btn_add_account = QPushButton('????'); self.btn_add_account.setObjectName('PrimaryButton')
+        self.btn_add_account = QPushButton('添加账号'); self.btn_add_account.setObjectName('PrimaryButton')
         row.addWidget(self.btn_add_account); row.addWidget(self.btn_login_selected); row.addWidget(self.btn_delete_selected); row.addWidget(self.btn_refresh_accounts); row.addStretch(1)
         ac.addLayout(row)
         tabs.addTab(accounts, '账号管理')
@@ -692,14 +697,15 @@ class MainWindow(QMainWindow):
         if dlg.exec_() == QDialog.Accepted:
             data = dlg.get_data()
             if not data['username'] or not data['password']:
-                QMessageBox.warning(self, '??', '????????')
+                QMessageBox.warning(self, '提示', '请填写账号和密码。')
                 return
             ok = self.auth_manager.add_account(data['username'], data['password'], data['totp_secret'])
             if ok:
-                self.append_log(f'[NativePanel] ?? {data["username"]} ????\n')
+                username = data["username"]
+                self.append_log(f'[NativePanel] 添加账号 {username} 成功。\\n')
                 self.refresh_native_panel()
             else:
-                QMessageBox.warning(self, '??', '????????')
+                QMessageBox.warning(self, '提示', '添加账号失败，请检查账号信息。')
 
     def _select_account_from_overview(self, row, col):
         item = self.overview_table.item(row, 0)

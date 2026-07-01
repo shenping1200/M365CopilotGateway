@@ -555,7 +555,7 @@ def _simple_local_tool_call(user_message: str, tools):
         return None
     msg = (user_message or '').lower()
     compact = re.sub(r'\s+', '', msg)
-    if ('c��' in compact or 'cdrive' in compact or 'c:' in compact) and any(x in compact for x in ('ռ��', '����', 'usage', 'space', 'free', 'ʣ��')):
+    if ('c盘' in compact or 'cdrive' in compact or 'c:' in compact) and any(x in compact for x in ('占用', '空间', 'usage', 'space', 'free', '剩余')):
         return _make_tool_call(terminal_tool, _terminal_arguments_for_tool(terminal_tool, 'df -h /mnt/c', 30))
     return None
 def _chat_impl(data: Dict[str, Any]):
@@ -577,7 +577,7 @@ def _chat_impl(data: Dict[str, Any]):
         return limited
 
     if not messages:
-        return jsonify({'error': {'message': 'messages ����Ϊ��'}}), 400
+        return jsonify({'error': {'message': 'messages cannot be empty'}}), 400
 
     system_msgs = []
     user_message = ''
@@ -602,7 +602,7 @@ def _chat_impl(data: Dict[str, Any]):
             history.append({'role': 'tool', 'content': content})
 
     if not user_message:
-        return jsonify({'error': {'message': 'û���û���Ϣ'}}), 400
+        return jsonify({'error': {'message': 'missing user message'}}), 400
 
     system_prompt = '\n\n'.join(system_msgs) if system_msgs else None
     tools_prompt = build_tools_system_prompt(tools, tool_choice) if tools else None
@@ -639,7 +639,7 @@ def _chat_impl(data: Dict[str, Any]):
     start_time = time.time()
     token, used_account = auth_manager.get_token()
     if not token:
-        return jsonify({'error': {'message': 'û�п��õ� token������ Dashboard ������˺Ų���¼'}}), 503
+        return jsonify({'error': {'message': 'no available token; please add an account and login in Dashboard'}}), 503
 
     client = _build_client(token, used_account)
     completion_id = f'chatcmpl-{uuid.uuid4().hex[:12]}'

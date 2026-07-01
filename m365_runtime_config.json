@@ -1,46 +1,46 @@
-﻿{
+{
   "models": [
     {
       "id": "copilot-auto",
       "object": "model",
       "owned_by": "microsoft",
-      "name": "Auto"
+      "name": "自动选择"
     },
     {
       "id": "copilot-quick",
       "object": "model",
       "owned_by": "microsoft",
-      "name": "Quick response"
+      "name": "快速答复"
     },
     {
       "id": "copilot-thinking",
       "object": "model",
       "owned_by": "microsoft",
-      "name": "Deep reasoning"
+      "name": "深度思考"
     },
     {
       "id": "gpt-5.5",
       "object": "model",
       "owned_by": "microsoft",
-      "name": "GPT 5.5 quick"
+      "name": "GPT 5.5 快速响应"
     },
     {
       "id": "gpt-5.5-thinking",
       "object": "model",
       "owned_by": "microsoft",
-      "name": "GPT 5.5 thinking"
+      "name": "GPT 5.5 深度思考"
     },
     {
       "id": "gpt-5.2",
       "object": "model",
       "owned_by": "microsoft",
-      "name": "GPT 5.2 quick"
+      "name": "GPT 5.2 快速响应"
     },
     {
       "id": "gpt-5.2-thinking",
       "object": "model",
       "owned_by": "microsoft",
-      "name": "GPT 5.2 thinking"
+      "name": "GPT 5.2 深度思考"
     }
   ],
   "tool_aliases": {
