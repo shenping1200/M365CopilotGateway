@@ -694,18 +694,25 @@ class MainWindow(QMainWindow):
 
     def add_account_native(self):
         dlg = AddAccountDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
-            data = dlg.get_data()
-            if not data['username'] or not data['password']:
-                QMessageBox.warning(self, '提示', '请填写账号和密码。')
-                return
-            ok = self.auth_manager.add_account(data['username'], data['password'], data['totp_secret'])
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        data = dlg.get_data()
+        if not data['username'] or not data['password']:
+            QMessageBox.warning(self, '提示', '请填写账号和密码。')
+            return
+        try:
+            from auth import get_account_manager
+            manager = get_account_manager()
+            ok = manager.add_account(data['username'], data['password'], data['totp_secret'])
             if ok:
                 username = data["username"]
                 self.append_log(f'[NativePanel] 添加账号 {username} 成功。\\n')
                 self.refresh_native_panel()
             else:
-                QMessageBox.warning(self, '提示', '添加账号失败，请检查账号信息。')
+                QMessageBox.warning(self, '提示', '账号已存在，或添加失败。')
+        except Exception as exc:
+            self.append_log(f'[NativePanel] 添加账号失败：{exc}\\n')
+            QMessageBox.warning(self, '添加失败', str(exc))
 
     def _select_account_from_overview(self, row, col):
         item = self.overview_table.item(row, 0)
