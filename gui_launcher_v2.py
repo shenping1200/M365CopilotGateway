@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -41,6 +42,8 @@ APP_TITLE = 'M365 Copilot 反代服务'
 API_URL = f'http://127.0.0.1:{config.SERVER_PORT}'
 DASH_URL = f'http://127.0.0.1:{config.DASHBOARD_PORT}'
 ORIG_STDOUT = sys.stdout
+AUTO_LOGIN_PREFRESH_SEC = 300
+AUTO_LOGIN_RETRY_COOLDOWN_SEC = 600
 
 def resolve_icon_path() -> Path | None:
     candidates = [
@@ -207,6 +210,11 @@ class MainWindow(QMainWindow):
         self.started_by_launcher = False
         self.token_worker = None
         self.status_worker = None
+        self.auto_login_queue = []
+        self.auto_login_attempted = {}
+        self.current_login_account = None
+        self.current_login_auto = False
+        self.current_login_handled = False
         self._detecting_service = False
         self._status_icons = {}
         self.runtime_log_path = APP_DIR / 'desktop_manager_runtime.log'
@@ -548,17 +556,27 @@ class MainWindow(QMainWindow):
         self.card_api._value_label.setText(f'\u8fd0\u884c\u4e2d:{config.SERVER_PORT}')
         self.card_panel._value_label.setText(f'\u8fd0\u884c\u4e2d:{config.DASHBOARD_PORT}')
         self.card_pool._value_label.setText(f'{total} \u4e2a\u8d26\u53f7')
-        self.native_status_label.setText(f'\u603b\u8d26\u53f7\uff1a{total} | \u53ef\u7528\uff1a{active} | \u4eca\u65e5\u8c03\u7528\uff1a{today_calls} | \u4eca\u65e5\u8f93\u5165Token\uff1a{today_input} | \u4eca\u65e5\u8f93\u51faToken\uff1a{today_output}')
+        status_text = f'\u603b\u8d26\u53f7\uff1a{total} | \u53ef\u7528\uff1a{active} | \u4eca\u65e5\u8c03\u7528\uff1a{today_calls} | \u4eca\u65e5\u8f93\u5165Token\uff1a{today_input} | \u4eca\u65e5\u8f93\u51faToken\uff1a{today_output}'
+        if self.current_login_account:
+            status_text += f' | \u6b63\u5728\u65e0\u5934\u767b\u5f55\uff1a{self.current_login_account}'
+        elif self.auto_login_queue:
+            status_text += f' | \u5f85\u767b\u5f55\uff1a{len(self.auto_login_queue)} \u4e2a\u8d26\u53f7'
+        self.native_status_label.setText(status_text)
         rows, acct_rows = [], []
         for account in accounts:
             status = account.get('status', '')
-            if status == 'ready':
+            username = account.get('username', '')
+            if username == self.current_login_account:
+                status = '\u6b63\u5728\u767b\u5f55'
+            elif username in self.auto_login_queue:
+                status = '\u7b49\u5f85\u767b\u5f55'
+            elif status == 'ready':
                 status = '\u5c31\u7eea'
             elif status == 'expired':
                 status = '\u5df2\u8fc7\u671f'
             remaining = self._format_remaining(account.get('token_remaining_sec', ''))
-            rows.append([account.get('username', ''), status, remaining, account.get('daily_calls', 0), account.get('daily_input_tokens', 0), account.get('daily_output_tokens', 0), account.get('source', '-')])
-            acct_rows.append([account.get('username', ''), status, '\u662f' if account.get('has_totp') else '-', account.get('source', '-')])
+            rows.append([username, status, remaining, account.get('daily_calls', 0), account.get('daily_input_tokens', 0), account.get('daily_output_tokens', 0), account.get('source', '-')])
+            acct_rows.append([username, status, '\u662f' if account.get('has_totp') else '-', account.get('source', '-')])
         self._set_table(self.overview_table, rows or [['\u6682\u65e0\u8d26\u53f7', '-', '-', '-', '-', '-', '-']])
         self._set_table(self.account_table, acct_rows or [['\u6682\u65e0\u8d26\u53f7', '-', '-', '-']])
         self.refresh_request_logs_native()
@@ -570,6 +588,7 @@ class MainWindow(QMainWindow):
 
     def _on_status_refresh_done(self, data, user_triggered=False):
         self._apply_status_data(data)
+        self._maybe_start_auto_login(data)
         if user_triggered:
             self.btn_refresh_native.setText('\u5df2\u5237\u65b0')
             self.btn_refresh_overview.setText('\u5df2\u5237\u65b0')
@@ -620,6 +639,57 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.append_log(f'[NativePanel] 请求日志刷新失败：{exc}\n')
 
+    def _expired_accounts_from_status(self, data):
+        accounts = data.get('accounts') or []
+        expired = []
+        now = time.time()
+        for account in accounts:
+            username = (account.get('username') or '').strip()
+            if not username or username in ('\u6682\u65e0\u8d26\u53f7', '\u670d\u52a1\u672a\u542f\u52a8', '-'):
+                continue
+            status = str(account.get('status') or '').strip().lower()
+            try:
+                remaining = float(account.get('token_remaining_sec') or 0)
+            except Exception:
+                remaining = 0
+            needs_login = status == 'expired' or remaining <= AUTO_LOGIN_PREFRESH_SEC
+            if not needs_login:
+                self.auto_login_attempted.pop(username, None)
+                continue
+            last_attempt = float(self.auto_login_attempted.get(username, 0) or 0)
+            if now - last_attempt < AUTO_LOGIN_RETRY_COOLDOWN_SEC:
+                continue
+            expired.append(username)
+        return expired
+
+    def _maybe_start_auto_login(self, data):
+        if self.current_login_account or self.auto_login_queue:
+            return
+        if self.token_worker is not None and self.token_worker.isRunning():
+            return
+        expired = self._expired_accounts_from_status(data)
+        if not expired:
+            return
+        self.auto_login_queue = expired
+        self.append_log(f'[AutoLogin] \u68c0\u6d4b\u5230 {len(expired)} \u4e2a\u8fc7\u671f/\u5373\u5c06\u8fc7\u671f\u8d26\u53f7\uff0c\u5c06\u9010\u4e2a\u65e0\u5934\u767b\u5f55\u3002\n')
+        self.statusBar().showMessage(f'\u81ea\u52a8\u767b\u5f55\u6392\u961f\uff1a{len(expired)} \u4e2a\u8d26\u53f7')
+        QTimer.singleShot(300, self._start_next_auto_login)
+
+    def _start_next_auto_login(self):
+        if self.token_worker is not None and self.token_worker.isRunning():
+            QTimer.singleShot(1000, self._start_next_auto_login)
+            return
+        if not self.auto_login_queue:
+            self.current_login_account = None
+            self.current_login_auto = False
+            self.current_login_handled = False
+            self.native_status_label.setText('\u81ea\u52a8\u767b\u5f55\u961f\u5217\u5df2\u5b8c\u6210\uff0c\u6b63\u5728\u5237\u65b0\u72b6\u6001...')
+            self.refresh_native_panel()
+            return
+        username = self.auto_login_queue.pop(0)
+        self.auto_login_attempted[username] = time.time()
+        self._start_token_refresh(username, auto=True)
+
     def refresh_token_native(self, username=None):
         username = (username or '').strip()
         if username in ('', '\u6682\u65e0\u8d26\u53f7', '\u670d\u52a1\u672a\u542f\u52a8', '-'):
@@ -627,35 +697,78 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, '\u63d0\u793a', '\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u6709\u6548\u8d26\u53f7\u3002')
                 return
             username = None
+        if username is None:
+            self.auto_login_attempted.clear()
+            self.auto_login_queue.clear()
+            self.current_login_account = None
+            self.current_login_auto = False
+            self.current_login_handled = False
+        self._start_token_refresh(username, auto=False)
+
+    def _start_token_refresh(self, username=None, auto=False):
         if self.token_worker is not None and self.token_worker.isRunning():
-            QMessageBox.information(self, '\u63d0\u793a', '\u5df2\u6709\u767b\u5f55/\u5237\u65b0\u4efb\u52a1\u6b63\u5728\u8fdb\u884c\uff0c\u8bf7\u7a0d\u5019\u3002')
+            if auto:
+                self.auto_login_queue.insert(0, username)
+                QTimer.singleShot(1000, self._start_next_auto_login)
+            else:
+                QMessageBox.information(self, '\u63d0\u793a', '\u5df2\u6709\u767b\u5f55/\u5237\u65b0\u4efb\u52a1\u6b63\u5728\u8fdb\u884c\uff0c\u8bf7\u7a0d\u5019\u3002')
             return
         payload = {'username': username} if username else {}
         target = username or '\u5168\u90e8\u8d26\u53f7'
-        self.append_log(f'[NativePanel] \u6b63\u5728\u540e\u53f0\u5237\u65b0 Token\uff1a{target}\n')
+        self.current_login_account = username
+        self.current_login_auto = auto
+        self.current_login_handled = False
+        prefix = '[AutoLogin]' if auto else '[NativePanel]'
+        action = '\u6b63\u5728\u65e0\u5934\u767b\u5f55' if username else '\u6b63\u5728\u6279\u91cf\u5237\u65b0 Token'
+        self.append_log(f'{prefix} {action}\uff1a{target}\n')
+        self.native_status_label.setText(f'{action}\uff1a{target}\uff0c\u8bf7\u7a0d\u5019...')
+        self.statusBar().showMessage(f'{action}\uff1a{target}')
         self.btn_login_all.setEnabled(False)
         self.btn_login_selected.setEnabled(False)
         self.btn_login_selected_overview.setEnabled(False)
-        self.token_worker = ApiWorker(API_URL, '/refresh', method='POST', payload=payload, timeout=180, parent=self)
-        self.token_worker.success.connect(lambda _data, target=target: self._on_token_refresh_done(target))
-        self.token_worker.failed.connect(lambda error, target=target: self._on_token_refresh_failed(target, error))
+        self.token_worker = ApiWorker(API_URL, '/refresh', method='POST', payload=payload, timeout=480, parent=self)
+        self.token_worker.success.connect(lambda _data, target=target, auto=auto: self._on_token_refresh_done(target, auto))
+        self.token_worker.failed.connect(lambda error, target=target, auto=auto: self._on_token_refresh_failed(target, error, auto))
         self.token_worker.finished.connect(self._on_token_worker_finished)
         self.token_worker.start()
 
-    def _on_token_refresh_done(self, target):
-        self.append_log(f'[NativePanel] Token \u5237\u65b0\u5b8c\u6210\uff1a{target}\n')
-        self.refresh_native_panel()
+    def _on_token_refresh_done(self, target, auto=False):
+        prefix = '[AutoLogin]' if auto else '[NativePanel]'
+        self.current_login_handled = True
+        self.append_log(f'{prefix} Token \u5237\u65b0\u5b8c\u6210\uff1a{target}\n')
+        self.native_status_label.setText(f'\u767b\u5f55\u5b8c\u6210\uff1a{target}')
+        if auto:
+            self.current_login_account = None
+            QTimer.singleShot(500, self._start_next_auto_login)
+        else:
+            self.refresh_native_panel()
 
-    def _on_token_refresh_failed(self, target, error):
-        QMessageBox.warning(self, '\u5237\u65b0\u5931\u8d25', error)
-        self.append_log(f'[NativePanel] Token \u5237\u65b0\u5931\u8d25\uff1a{target}\uff0c{error}\n')
-        self.refresh_native_panel()
+    def _on_token_refresh_failed(self, target, error, auto=False):
+        prefix = '[AutoLogin]' if auto else '[NativePanel]'
+        self.current_login_handled = True
+        if not auto:
+            QMessageBox.warning(self, '\u5237\u65b0\u5931\u8d25', error)
+        self.append_log(f'{prefix} Token \u5237\u65b0\u5931\u8d25\uff1a{target}\uff0c{error}\n')
+        self.native_status_label.setText(f'\u767b\u5f55\u5931\u8d25\uff1a{target}\uff0c\u7ee7\u7eed\u5904\u7406\u4e0b\u4e00\u4e2a\u8d26\u53f7...')
+        if auto:
+            self.current_login_account = None
+            QTimer.singleShot(800, self._start_next_auto_login)
+        else:
+            self.refresh_native_panel()
 
     def _on_token_worker_finished(self):
         self.btn_login_all.setEnabled(True)
         self.btn_login_selected.setEnabled(True)
         self.btn_login_selected_overview.setEnabled(True)
         self.token_worker = None
+        if self.current_login_auto and not self.current_login_handled:
+            target = self.current_login_account or '\u672a\u77e5\u8d26\u53f7'
+            self.append_log(f'[AutoLogin] \u767b\u5f55\u4efb\u52a1\u5f02\u5e38\u7ed3\u675f\uff1a{target}\uff0c\u7ee7\u7eed\u5904\u7406\u4e0b\u4e00\u4e2a\u8d26\u53f7\u3002\n')
+            self.current_login_account = None
+            QTimer.singleShot(800, self._start_next_auto_login)
+        if not self.current_login_auto:
+            self.current_login_account = None
+        self.current_login_handled = False
         self.status_worker = None
         self._detecting_service = False
 
@@ -772,6 +885,7 @@ class MainWindow(QMainWindow):
             self.append_log('[Launcher] \u670d\u52a1\u68c0\u6d4b\uff1aAPI=True, Dashboard=True\n')
         self.statusBar().showMessage(f'\u8fd0\u884c\u4e2d | API: {API_URL} | \u9762\u677f: {DASH_URL}')
         self._apply_status_data(data)
+        self._maybe_start_auto_login(data)
         worker.deleteLater()
 
     def _on_service_detect_failed(self, error, initial, worker):
@@ -820,11 +934,11 @@ class MainWindow(QMainWindow):
         self.process.started.connect(self._on_process_started)
         self.process.finished.connect(self._on_process_finished)
         python_exe = self._resolve_python()
-        self.append_log(f'[Launcher] 使用解释器：{python_exe}`n[Launcher] 正在启动 supervisor ...`n')
+        self.append_log(f'[Launcher] 使用解释器：{python_exe}\n[Launcher] 正在启动服务 ...\n')
         if getattr(sys, 'frozen', False):
             self.process.start(python_exe, ['--supervisor'])
         else:
-            self.process.start(python_exe, ['-u', 'm365_supervisor.py'] if python_exe.lower().endswith('.exe') else ['m365_supervisor.py'])
+            self.process.start(python_exe, ['-X', 'utf8', 'app_launcher.py'])
         QTimer.singleShot(2500, self._mark_start_feedback)
 
     def _mark_start_feedback(self):

@@ -18,6 +18,7 @@ import asyncio
 import os
 import time
 import uuid
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -34,6 +35,16 @@ app = Flask(__name__)
 auth_manager = get_account_manager()
 req_logger = get_request_logger()
 runtime_cfg = load_runtime_config()
+
+
+class _QuietPollingFilter(logging.Filter):
+    def filter(self, record):
+        message = record.getMessage()
+        quiet_paths = ('"GET /status ', '"GET /v1/accounts ')
+        return not any(path in message for path in quiet_paths)
+
+
+logging.getLogger('werkzeug').addFilter(_QuietPollingFilter())
 
 RATE_LIMIT_RPM = float(os.getenv('M365_RATE_LIMIT_RPM', '30'))
 RATE_LIMIT_BURST = int(os.getenv('M365_RATE_LIMIT_BURST', '5'))

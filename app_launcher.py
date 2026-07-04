@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import logging
 from pathlib import Path
 
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -31,10 +32,22 @@ from request_logger import get_request_logger
 from unified_server import app as flask_app
 
 
+class _QuietPollingFilter(logging.Filter):
+    def filter(self, record):
+        message = record.getMessage()
+        quiet_paths = ('"GET /status ', '"GET /v1/accounts ')
+        return not any(path in message for path in quiet_paths)
+
+
+def _quiet_polling_access_logs():
+    logging.getLogger('werkzeug').addFilter(_QuietPollingFilter())
+
+
 def main():
     manager = get_account_manager()
     logger = get_request_logger()
     os.makedirs(config.LOG_DIR, exist_ok=True)
+    _quiet_polling_access_logs()
 
     def run_flask():
         flask_app.run(

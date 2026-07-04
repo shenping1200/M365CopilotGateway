@@ -4,6 +4,8 @@ token_cache.json
 substrate_token.txt
 msal_cache.bin
 *.bak
+*.bak_*
+*.bak.*
 *2fa*.csv
 *邮箱*.csv
 

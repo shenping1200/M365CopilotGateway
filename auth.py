@@ -386,47 +386,68 @@ class AccountManager:
     # Playwright Chromium 自动登录
     # ==================================================================
 
-    def _playwright_login(self, account: dict) -> str | None:
-        """
-        使用 Playwright Chromium 自动登录并捕获 substrate token
-        每次创建全新的浏览器上下文，不保留任何状态
-        """
-        print(f"[Auth] {account.get('username', '')} waiting for Playwright login lock...")
-        self._refresh_lock.acquire()
-
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+    def _playwright_login(self, account: dict, headless: bool | None = None, timeout: int | None = None, retries: int | None = None) -> str | None:
+        from config import PLAYWRIGHT_HEADLESS, LOGIN_TIMEOUT, LOGIN_RETRIES, LOGIN_RETRY_DELAY
+        headless = headless if headless is not None else PLAYWRIGHT_HEADLESS
+        timeout = timeout if timeout is not None else LOGIN_TIMEOUT
+        retries = retries if retries is not None else LOGIN_RETRIES
+        uname = account.get("username", "")
+        last_error = ""
+        print(f"[Auth] {uname} headless={headless} timeout={timeout}s retries={retries}")
+        for attempt in range(retries + 1):
+            if attempt > 0:
+                import time
+                print(f"[Auth] {uname} retry {attempt}/{retries} after {LOGIN_RETRY_DELAY}s")
+                time.sleep(LOGIN_RETRY_DELAY)
+            self._refresh_lock.acquire()
             try:
-                result = loop.run_until_complete(self._do_playwright_login(account))
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(
+                        self._do_playwright_login(account, headless=headless, timeout=timeout)
+                    )
+                finally:
+                    loop.close()
+                if result:
+                    import time as _time
+                    self._last_credential_ts = _time.time()
+                    return result
+                last_error = "no token captured"
+            except Exception as e:
+                last_error = str(e)
+                print(f"[Auth] {uname} attempt {attempt} failed: {e}")
             finally:
-                loop.close()
-            return result
-        except Exception as e:
-            print(f"[Auth] Playwright 登录异常: {e}")
-            return None
-        finally:
-            self._refresh_lock.release()
+                self._refresh_lock.release()
+        print(f"[Auth] {uname} all {retries + 1} attempts exhausted: {last_error}")
+        return None
 
-    async def _do_playwright_login(self, account: dict) -> str | None:
+    async def _do_playwright_login(self, account: dict, headless: bool = False, timeout: int = 90) -> str | None:
         """Playwright 自动登录核心逻辑"""
         from playwright.async_api import async_playwright
 
         username = account['username']
         password = account.get('password', '')
         totp_secret = account.get('totp_secret', '')
+        timeout = max(60, int(timeout or 90))
+        goto_timeout_ms = timeout * 1000
+        short_timeout_ms = min(30000, max(10000, timeout * 1000 // 4))
+        network_timeout_ms = min(30000, max(15000, timeout * 1000 // 3))
+        post_login_wait_seconds = min(60, max(30, timeout // 2))
+        token_wait_seconds = min(90, max(45, timeout // 2))
 
         captured_tokens = []
         self._last_captured_expires_at = None  # 每次登录重置
         self._last_captured_refresh_token = None  # 重置 sydney refresh_token
         self._captured_refresh_tokens = {}  # access_token → refresh_token 映射
 
+        browser = None
         pw = await async_playwright().start()
         try:
             print(f"[Auth] 启动 Chromium（全新环境）...")
             browser_path = find_system_browser()
             launch_options = {
-                'headless': config.PLAYWRIGHT_HEADLESS,
+                'headless': headless,
                 'args': ['--disable-blink-features=AutomationControlled', '--no-sandbox'],
             }
             if browser_path:
@@ -466,7 +487,7 @@ class AccountManager:
             try:
                 await page.goto(
                     'https://m365.cloud.microsoft/chat',
-                    timeout=90000,
+                    timeout=goto_timeout_ms,
                     wait_until='domcontentloaded',
                 )
             except Exception as e:
@@ -475,7 +496,7 @@ class AccountManager:
             # 等待页面充分加载（重定向到登录页需要时间）
             await asyncio.sleep(2)
             try:
-                await page.wait_for_load_state('domcontentloaded', timeout=10000)
+                await page.wait_for_load_state('domcontentloaded', timeout=short_timeout_ms)
             except Exception:
                 pass
             await asyncio.sleep(1)
@@ -490,7 +511,7 @@ class AccountManager:
                 try:
                     await page.wait_for_selector(
                         'input[type="email"], input[name="loginfmt"]',
-                        timeout=20000,
+                        timeout=short_timeout_ms,
                     )
                     print(f"[Auth] 邮箱输入框已就绪")
                 except Exception:
@@ -513,7 +534,7 @@ class AccountManager:
                 print(f"[Auth] 等待登录页跳转...")
                 dismiss_task2 = asyncio.create_task(self._dismiss_stay_signed_in(page))
                 try:
-                    for wait_i in range(30):
+                    for wait_i in range(post_login_wait_seconds):
                         cur = page.url
                         if 'login.microsoftonline.com' not in cur and 'login.live.com' not in cur:
                             print(f"[Auth] 已跳转离开登录页: {cur[:100]}")
@@ -531,7 +552,7 @@ class AccountManager:
 
                 # 等待页面加载（networkidle 确保 MSAL token 交换完成）
                 try:
-                    await page.wait_for_load_state('networkidle', timeout=15000)
+                    await page.wait_for_load_state('networkidle', timeout=network_timeout_ms)
                     print(f'[Auth] 登录后 networkidle 完成')
                 except Exception:
                     print(f'[Auth] 登录后 networkidle 超时，继续...')
@@ -546,7 +567,7 @@ class AccountManager:
                 try:
                     await page.goto(
                         'https://m365.cloud.microsoft/chat',
-                        timeout=30000,
+                        timeout=goto_timeout_ms,
                         wait_until='domcontentloaded',
                     )
                 except Exception as e:
@@ -556,7 +577,7 @@ class AccountManager:
             # 等待 Copilot 页面 networkidle（确保 MSAL.js 完成 sydney token 获取）
             print(f"[Auth] 等待 Copilot 页面完全加载（MSAL token 获取）...")
             try:
-                await page.wait_for_load_state('networkidle', timeout=15000)
+                await page.wait_for_load_state('networkidle', timeout=network_timeout_ms)
                 print(f"[Auth] Copilot 页面 networkidle 完成")
             except Exception:
                 print(f"[Auth] Copilot 页面 networkidle 超时，继续...")
@@ -569,7 +590,7 @@ class AccountManager:
             print(f"[Auth] 触发后共有 {len(captured_tokens)} 个 token")
 
             # 等待 token 捕获（每10秒重新触发一次聊天）
-            for i in range(60):
+            for i in range(token_wait_seconds):
                 if captured_tokens:
                     print(f"[Auth] Token 循环在第 {i}s 检测到 {len(captured_tokens)} 个 token")
                     break
@@ -596,6 +617,11 @@ class AccountManager:
 
         except Exception as e:
             print(f"[Auth] Playwright 异常: {e}")
+            if browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
             try:
                 await pw.stop()
             except:
